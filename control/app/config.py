@@ -78,6 +78,10 @@ DEFAULTS = {
         "tls": {"self_signed": True, "domain": "", "cert_path": "", "key_path": ""},
         "debug": {"asterisk": False, "charon": False, "pcap": False, "ami": False},
         "manager_url": "",          # reachable URL engines POST events to (auto if empty)
+        # Public address of this WebUI, used to build tappable links in push
+        # notifications (Bark `url`). Empty = no links. Set it to whatever the
+        # operator actually browses to, e.g. https://192.168.5.241:8443
+        "webui_url": "",
         "retry": {"max": 3, "interval": 30},   # auto-retry attempts + seconds per attempt
         # Minutes an enabled line may stay off the network before the line_offline notification
         # is sent. Short outages are the retry policy's job; this is for the ones it is losing.

@@ -964,6 +964,20 @@ def send_bark(cfg: dict, payload: dict) -> dict:
     # carrying a code that removes the manual transcription step entirely.
     if str(payload.get("code") or "").strip():
         body["copy"] = str(payload["code"]).strip()
+    # Tapping the notification opens this URL in the browser. A home-screen web clip cannot be
+    # launched from outside iOS, so the best available behaviour is to land on the matching page
+    # of the WebUI itself.
+    webui = str(cfg.get("webui_url") or "").strip().rstrip("/")
+    if webui.startswith(("http://", "https://")):
+        routes = {
+            EV_INCOMING_SMS: "/#/messages",
+            EV_MISSED_CALL: "/#/calls",
+            EV_INCOMING_CALL: "/#/calls",
+            EV_VOICEMAIL: "/#/voicemails",
+        }
+        route = routes.get(str(payload.get("event") or ""))
+        if route:
+            body["url"] = webui + route
 
     enc_key = str(cfg.get("encryption_key") or "").strip()
     if enc_key:
@@ -1016,7 +1030,10 @@ def dispatch(settings: dict, event: str, instance: dict, source: str, text: str 
         pp = settings.get("pushplus") or {}
         if pp.get("enabled") and _events_enabled(pp).get(event):
             deliveries.append(("pushplus", send_pushplus, pp))
-        bk = settings.get("bark") or {}
+        bk = dict(settings.get("bark") or {})
+        # The tappable link target is a gateway-wide setting, not a per-channel one; copy
+        # it in here so send_bark stays a pure function of its cfg argument.
+        bk.setdefault("webui_url", settings.get("webui_url") or "")
         if bk.get("enabled") and _events_enabled(bk).get(event):
             deliveries.append(("bark", send_bark, bk))
         for position, fs in enumerate(feishu_channels(settings.get("feishu") or {}), start=1):
