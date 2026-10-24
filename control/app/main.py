@@ -8146,6 +8146,12 @@ async def api_engine_event(payload: dict):
         if not relative.startswith("voicemail/"):
             relative = os.path.join("voicemail", os.path.basename(relative))
         full = _voicemail_file(iid, relative)
+        # Record() reports RECORDED_FILE without the container-side extension, so the event
+        # usually arrives as ".../voicemail/vm-<epoch>-<peer>" while the file on disk is
+        # ".wav". Accept that form instead of dropping a recording that exists.
+        if full and not os.path.isfile(full) and os.path.isfile(full + ".wav"):
+            full = full + ".wav"
+            relative = relative + ".wav"
         if not full or not os.path.isfile(full):
             log.warning("voicemail event for %s references an unusable path %r", iid, raw)
             return {"ok": False, "error": "recording not found"}

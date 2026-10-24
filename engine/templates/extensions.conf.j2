@@ -104,7 +104,22 @@ same => n,Set(VMSTART=${EPOCH})
 ; prompt above already provided.
 same => n,Record(/logs/voicemail/vm-${EPOCH}-${FILTER(0-9+,${CALLPEER})}.wav,5,{{ vm_max_seconds }},kq)
 same => n,Set(VMSECS=$[${EPOCH} - ${VMSTART}])
-same => n,TrySystem(/usr/local/bin/notify.py voicemail_new "${CALLPEER}" "${RECORDED_FILE}" "${VMSECS}" &)
+same => n,Hangup()
+; The caller usually hangs up WHILE Record() is still running (that is what the k option is
+; for), and once the channel is dead Asterisk stops the ordinary priorities -- which is why
+; the inline notify above never fired for those calls and the message stayed invisible while
+; the call record stayed 'ringing'. The h extension always runs, so the notification lives
+; there instead, guarded so the normal case (silence timeout, dialplan reaches Hangup) is
+; still reported exactly once. Synchronous, not backgrounded: nothing may outlive the channel
+; teardown that would kill a '&' child before it posts.
+exten => h,1,GotoIf($["${VMNOTIFIED}"="1"]?vmnotify_done)
+same => n,GotoIf($["${RECORDED_FILE}"=""]?vmnotify_done)
+same => n,Set(VMNOTIFIED=1)
+same => n,GotoIf($["${VMSECS}"!=""]?vmsecs_ready)
+same => n,Set(VMSECS=$[${EPOCH} - ${VMSTART}])
+same => n(vmsecs_ready),TrySystem(/usr/local/bin/notify.py voicemail_new "${CALLPEER}" "${RECORDED_FILE}" "${VMSECS}")
+same => n(vmnotify_done),Gosub(hangup-by,s,1)
+same => n,TrySystem(/usr/local/bin/notify.py call_result in "${CALLPEER}" "NOANSWER" "${HANGUPCAUSE}" "${GOSUB_RETVAL}")
 same => n,Hangup()
 {% endif %}
 
