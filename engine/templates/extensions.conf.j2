@@ -92,6 +92,11 @@ same => n,Wait(0.5)
 ; The prompt ships with this repository (templates/sounds); the base image's own sound
 ; packages are a side effect of its build and are deliberately not relied on. A missing file
 ; must not abort the recording, so the playback is tolerated rather than checked.
+; Fixed Cantonese greeting: "機主正忙，有事請留言，無事請掛機。" Recorded once
+; (edge-tts zh-HK-HiuMaanNeural, 8 kHz mono) and shipped as a repo asset, so the engine
+; never needs a TTS service at call time. Tolerated, not checked: a missing file must
+; not stop the recording that follows.
+same => n,TryExec(Playback(/var/lib/asterisk/mdd-sounds/vm-greeting-yue))
 same => n,TryExec(Playback(/var/lib/asterisk/mdd-sounds/vm-beep))
 same => n,Set(VMSTART=${EPOCH})
 ; 5s of silence ends it, {{ vm_max_seconds }}s caps it. k keeps what was recorded when the
