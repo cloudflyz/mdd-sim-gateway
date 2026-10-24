@@ -973,7 +973,8 @@ def send_bark(cfg: dict, payload: dict) -> dict:
             EV_INCOMING_SMS: "/#/messages",
             EV_MISSED_CALL: "/#/calls",
             EV_INCOMING_CALL: "/#/calls",
-            EV_VOICEMAIL: "/#/voicemails",
+            # There is no separate voicemail view; the list lives on the Calls page.
+            EV_VOICEMAIL: "/#/calls",
         }
         route = routes.get(str(payload.get("event") or ""))
         if route:
