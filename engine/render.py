@@ -307,6 +307,8 @@ def build_context(cfg):
         # whitelists answer 403 to an unknown terminal). Blank/unset keeps the default.
         "user_agent": sanitize_user_agent(sip.get("user_agent")) or DEFAULT_USER_AGENT,
         "user_eq_phone": bool(sip.get("user_eq_phone", False)),
+        # Outgoing DTMF transport; empty leaves the Asterisk default (rfc4733).
+        "dtmf_mode": sip.get("dtmf_mode", ""),
         # Rendered by the manager only when switched on; a hand-authored file may still say
         # invite_uri_params_enable: false to keep the text without using it.
         "invite_uri_params": ("" if sip.get("invite_uri_params_enable") is False

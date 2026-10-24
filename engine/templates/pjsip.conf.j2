@@ -51,8 +51,9 @@ receive_sms=yes
 
 [volte_ims]
 type=endpoint
-dtmf_mode=info
-; Carrier-specific: O2 UK requires ;user=phone on originating telephone-number INVITEs, while
+{% if dtmf_mode %}
+dtmf_mode={{ dtmf_mode }}
+{% endif %}; Carrier-specific: O2 UK requires ;user=phone on originating telephone-number INVITEs, while
 ; Telus' SMSC rejects MESSAGE request-URIs carrying it. The control-plane config selects this.
 user_eq_phone={{ 'yes' if user_eq_phone else 'no' }}
 transport=volte_ims

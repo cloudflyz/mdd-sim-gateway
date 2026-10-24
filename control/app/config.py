@@ -1063,6 +1063,22 @@ def normalize_idr_mode(mode: str) -> str:
     return m if m in ("apn", "fqdn") else "apn"
 
 
+DTMF_MODES = ("rfc4733", "info", "inband", "auto")
+
+
+def normalize_dtmf_mode(value) -> str:
+    """Outgoing DTMF transport toward the carrier leg.
+
+    PJSIP's default is rfc4733 (RFC4733 telephone-event). Some IMS cores ignore
+    those events even when the payload type is negotiated and only act on SIP
+    INFO, so the transport has to be selectable per line. Empty or unknown
+    values resolve to "" and render.py then omits the directive, leaving the
+    PJSIP default in place -- imported or older configs keep working.
+    """
+    mode = str(value or "").strip().lower()
+    return mode if mode in DTMF_MODES else ""
+
+
 def normalize_cp_mode(mode: str) -> str:
     """Address family of the SWu CFG (config) request, which MUST match the carrier's IMS PDN or
     the ePDG rejects the PDN connection at the final IKE_AUTH (after EAP succeeds):
@@ -1309,6 +1325,8 @@ def _render_instance_json(inst: dict, settings: dict) -> dict:
             # they will route an originating voice INVITE. Keep this carrier-configurable because
             # other networks reject SMS MESSAGE request URIs when the parameter is present.
             "user_eq_phone": bool(sip.get("user_eq_phone", False)),
+            # Outgoing DTMF transport; blank keeps the PJSIP default (rfc4733).
+            "dtmf_mode": normalize_dtmf_mode(sip.get("dtmf_mode")),
             # URI parameters added to the request URI of an outgoing call only (INVITE, not
             # SMS), for carriers that route a call only with them (T-Mobile US: user=phone).
             "invite_uri_params": (sanitize_uri_params(sip.get("invite_uri_params"))
