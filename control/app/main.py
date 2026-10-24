@@ -5286,7 +5286,7 @@ def api_put_settings(body: dict):
                 or not line_offline.MIN_MINUTES <= minutes <= line_offline.MAX_MINUTES:
             raise HTTPException(400, f"offline notification delay must be "
                                      f"{line_offline.MIN_MINUTES}-{line_offline.MAX_MINUTES} minutes")
-    for channel in ("webhook", "telegram", "pushplus"):
+    for channel in ("webhook", "telegram", "pushplus", "bark"):
         try:
             notify_push.validate_message_templates(body.get(channel) or {})
         except ValueError as exc:
@@ -5326,6 +5326,11 @@ def api_put_settings(body: dict):
             raise HTTPException(400, "PushPlus token is required")
         if str(pushplus.get("template") or "html") not in {"html", "txt", "markdown", "json"}:
             raise HTTPException(400, "unsupported PushPlus template")
+    bark = body.get("bark") or {}
+    try:
+        notify_push.validate_bark(bark)
+    except ValueError as exc:
+        raise HTTPException(400, f"invalid Bark configuration: {exc}") from exc
     feishu = body.get("feishu") or {}
     try:
         channels = notify_push.validate_feishu_channels(feishu)
@@ -5532,6 +5537,17 @@ async def api_feishu_test(body: dict):
     try:
         event = _notification_test_event(body)
         return await asyncio.to_thread(notify_push.send_feishu, body, _test_push_payload(event))
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(502, str(exc)) from exc
+
+
+@app.post("/api/notifications/bark/test")
+async def api_bark_test(body: dict):
+    try:
+        event = _notification_test_event(body)
+        return await asyncio.to_thread(notify_push.send_bark, body, _test_push_payload(event))
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
     except RuntimeError as exc:
@@ -8757,3 +8773,5 @@ if os.path.isdir(WEBUI_DIR):
         if os.path.isfile(index):
             return FileResponse(index, headers={"Cache-Control": INDEX_CACHE_CONTROL})
         return JSONResponse({"error": "webui not built"}, status_code=404)
+
+# BARK_CHANNEL_PATCH

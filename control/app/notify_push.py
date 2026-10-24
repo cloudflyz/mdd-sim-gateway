@@ -22,6 +22,7 @@ import hmac
 import logging
 import json
 import os
+import random
 import re
 import threading
 import time
@@ -187,7 +188,7 @@ def _events_enabled(chan: dict) -> dict:
 def has_enabled_channel(settings: dict, event: str) -> bool:
     standard = any(bool((settings.get(key) or {}).get("enabled"))
                and bool(_events_enabled(settings.get(key) or {}).get(event))
-               for key in ("webhook", "telegram", "pushplus"))
+               for key in ("webhook", "telegram", "pushplus", "bark"))
     return standard or any(
         bool(channel.get("enabled")) and bool(_events_enabled(channel).get(event))
         for channel in feishu_channels(settings.get("feishu") or {})
@@ -239,6 +240,34 @@ def validate_feishu_channels(cfg: dict) -> list[dict]:
     return channels
 
 
+# SMS verification codes. Same algorithm as the x3 and YN076 gateways on purpose: one user,
+# one class of message, and a divergence would mean a code that extracts on one box but not
+# the other. Keyword context first (most precise), then a bare 4-6 digit fallback.
+_SMS_CODE_KEYWORDS = (
+    "验证码", "校验码", "动态码", "动态密码", "验证密码", "登录码",
+    "CODE", "Code", "code", "OTP", "otp",
+)
+_SMS_CODE_KEYWORD_RE = re.compile(
+    "(?:" + "|".join(re.escape(k) for k in _SMS_CODE_KEYWORDS) + ")[^0-9]{0,8}([0-9]{4,8})")
+# A bare number is far weaker evidence, so it is capped at 4-6 digits and filtered against
+# service short codes and years — anything longer is an order number or a phone number.
+_SMS_CODE_BARE_RE = re.compile("(?:[^0-9]|^)([0-9]{4,6})(?:[^0-9]|$)")
+_SMS_CODE_DENY_RE = re.compile("^(?:10086|10010|10000|955[0-9][0-9]?|110|120|119|123[0-9][0-9]|20[0-9][0-9])$")
+
+
+def _extract_sms_code(text: str | None) -> str:
+    """Pull a verification code out of an SMS body, or return "" when there is none."""
+    if not text:
+        return ""
+    match = _SMS_CODE_KEYWORD_RE.search(text)
+    if match:
+        return match.group(1)
+    match = _SMS_CODE_BARE_RE.search(text)
+    if match and not _SMS_CODE_DENY_RE.match(match.group(1)):
+        return match.group(1)
+    return ""
+
+
 def build_payload(event: str, instance: dict, source: str, text: str | None) -> dict:
     """The canonical event body both channels are built from. `instance` is the stored
     line config (for ICCID + MSISDN); `source` is the event's originating number; `text`
@@ -250,6 +279,9 @@ def build_payload(event: str, instance: dict, source: str, text: str | None) -> 
         "iccid": instance.get("iccid", "") or "",
         "msisdn": instance.get("msisdn", "") or "",       # the line's own number (may be "")
         "from": source or "",                             # the event's source number
+        # Extracted verification code ("" when the SMS carries none). Channels and message
+        # templates can surface it without re-parsing the body.
+        "code": _extract_sms_code(text) if event == EV_INCOMING_SMS else "",
         "text": text if event in (EV_INCOMING_SMS, EV_HOST_ALERT, EV_NUMBER_CHANGED,
                                   EV_LINE_UNRECOVERABLE, EV_LINE_OFFLINE,
                                   EV_LINE_RECOVERED, EV_KEEPALIVE_RESULT,
@@ -303,7 +335,13 @@ def _default_notification_message(payload: dict) -> dict:
     if event == EV_SOFTWARE_UPDATE:
         return {"title": _titled(f"MDD Sim Gateway 新版本 · v{sender}"),
                 "content": payload.get("text") or ""}
-    title = _titled(f"VoWiFi {'短信' if event == EV_INCOMING_SMS else '来电'} · {sim}")
+    code = payload.get("code") or ""
+    if event == EV_INCOMING_SMS and code:
+        # Lead with the code: on a lock screen the title is all that reliably shows, and a
+        # one-time code is the reason the user is looking at the notification at all.
+        title = _titled(f"VoWiFi 短信 · {sim} · 验证码 {code}")
+    else:
+        title = _titled(f"VoWiFi {'短信' if event == EV_INCOMING_SMS else '来电'} · {sim}")
     lines = [f"SIM: {sim}"]
     if own:
         lines.append(f"本机号码: {own}")
@@ -335,7 +373,7 @@ def _render(value, context: dict):
 
 
 _MESSAGE_TEMPLATE_FIELDS = {
-    "event", "instance", "sim_name", "iccid", "msisdn", "from", "text",
+    "event", "instance", "sim_name", "iccid", "msisdn", "from", "text", "code",
     "title", "content",
 }
 _MAX_MESSAGE_TEMPLATE_LENGTH = 4000
@@ -787,6 +825,175 @@ def _post_telegram(cfg: dict, payload: dict):
         log.warning("telegram delivery failed: %s", type(exc).__name__)
 
 
+
+# --- BARK_CHANNEL_PATCH: Bark (iOS) push channel --------------------------------
+# 加密协议：把 push 参数对象序列化成 JSON，用 AES-128-CBC 加密后 base64 作为
+# ciphertext 参数发送。key/iv 各 16 字符。文档：https://bark.day.app/#/encryption
+# 未配置 encryption_key 时走明文（Bark 服务端可见内容）。
+_BARK_LEVELS = {"active", "timeSensitive", "passive", "critical"}
+# 算法 → key 长度（字符）。与 Bark App 的 Algorithm.keyLength 一致。
+_BARK_KEY_LEN = {"AES128": 16, "AES192": 24, "AES256": 32}
+# 模式 → IV 长度（字符）。与 Bark App 的 randomIv() 一致；ECB 不需要 IV。
+_BARK_IV_LEN = {"CBC": 16, "GCM": 12}
+_BARK_MODES = ("CBC", "GCM", "ECB")
+# 官方 randomIv() 用的字符集
+_BARK_IV_ALPHABET = "0123456789abcdef"
+
+
+def _bark_random_iv(mode: str) -> str:
+    """随机 IV。Bark App 的 randomIv() 就是 hex 字符集 + 模式对应长度。"""
+    length = _BARK_IV_LEN.get(mode, 0)
+    if not length:
+        return ""
+    return "".join(random.choice(_BARK_IV_ALPHABET) for _ in range(length))
+
+
+def _bark_cipher(key: str, mode: str, iv: str):
+    """构造 (encrypt_fn, iv_used)。"""
+    from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+    raw_key = key.encode("utf-8")
+    if mode == "GCM":
+        raw_iv = iv.encode("utf-8")
+        aead = AESGCM(raw_key)
+
+        def _gcm_encrypt(plain: bytes) -> bytes:
+            # GCM 用 12 字节 IV；密文含 tag（与 Bark 的 .combined 一致）
+            return aead.encrypt(raw_iv, plain, None)
+
+        return _gcm_encrypt, iv
+
+    if mode == "CBC":
+        from cryptography.hazmat.primitives import padding as _pad
+        raw_iv = iv.encode("utf-8")
+
+        def _cbc_encrypt(plain: bytes) -> bytes:
+            padder = _pad.PKCS7(128).padder()
+            data = padder.update(plain) + padder.finalize()
+            enc = Cipher(algorithms.AES(raw_key), modes.CBC(raw_iv)).encryptor()
+            return enc.update(data) + enc.finalize()
+
+        return _cbc_encrypt, iv
+
+    if mode == "ECB":
+        from cryptography.hazmat.primitives import padding as _pad
+        # ECB 无 IV；Bark 侧 ECB 时 iv() 返回空串
+        def _ecb_encrypt(plain: bytes) -> bytes:
+            padder = _pad.PKCS7(128).padder()
+            data = padder.update(plain) + padder.finalize()
+            enc = Cipher(algorithms.AES(raw_key), modes.ECB()).encryptor()
+            return enc.update(data) + enc.finalize()
+
+        return _ecb_encrypt, ""
+
+    raise ValueError(f"unsupported Bark cipher mode: {mode}")
+
+
+def _bark_encrypt(payload_json: str, key: str, mode: str = "CBC",
+                  iv: str | None = None) -> tuple[str, str]:
+    """加密 push JSON。
+
+    返回 (ciphertext_b64, iv_used)。iv=None 时随机生成（推荐，也是新版 App 的做法）。
+    """
+    algorithm = {16: "AES128", 24: "AES192", 32: "AES256"}.get(len(key.encode("utf-8")))
+    if algorithm is None:
+        raise ValueError("Bark encryption key must be 16, 24 or 32 characters")
+    if mode not in _BARK_MODES:
+        raise ValueError(f"unsupported Bark cipher mode: {mode}")
+
+    expect_iv = _BARK_IV_LEN.get(mode, 0)
+    if iv is None:
+        iv = _bark_random_iv(mode)
+    elif expect_iv and len(iv) != expect_iv:
+        raise ValueError(f"Bark {mode} iv must be exactly {expect_iv} characters")
+
+    encrypt_fn, iv_used = _bark_cipher(key, mode, iv)
+    ciphertext = base64.b64encode(encrypt_fn(payload_json.encode("utf-8"))).decode("ascii")
+    return ciphertext, iv_used
+
+
+def validate_bark(cfg: dict) -> None:
+    """保存设置时用；只做校验，不发请求。"""
+    if not cfg.get("enabled"):
+        return
+    if not str(cfg.get("device_key") or "").strip():
+        raise ValueError("Bark device key is required")
+    # 与 send_bark 一致：未显式填写时回落到官方服务端
+    server = str(cfg.get("server") or "https://api.day.app").strip()
+    if not server.startswith(("http://", "https://")):
+        raise ValueError("Bark server must be an http(s) URL")
+    level = str(cfg.get("level") or "active").strip()
+    if level and level not in _BARK_LEVELS:
+        raise ValueError("unsupported Bark level")
+    mode = str(cfg.get("encryption_mode") or "CBC").strip().upper()
+    if mode not in _BARK_MODES:
+        raise ValueError("unsupported Bark encryption mode")
+    key = str(cfg.get("encryption_key") or "").strip()
+    if key:
+        key_len = len(key.encode("utf-8"))
+        if key_len not in _BARK_KEY_LEN.values():
+            raise ValueError("Bark encryption key must be 16, 24 or 32 characters")
+
+
+def send_bark(cfg: dict, payload: dict) -> dict:
+    """POST 一条 Bark 推送，支持分组与 AES-128-CBC 加密。"""
+    device_key = str(cfg.get("device_key") or "").strip()
+    if not device_key:
+        raise ValueError("Bark device key is required")
+    server = str(cfg.get("server") or "https://api.day.app").strip().rstrip("/")
+    if not server.startswith(("http://", "https://")):
+        raise ValueError("Bark server must be an http(s) URL")
+
+    message = build_notification_message(payload, cfg)
+    body: dict[str, Any] = {
+        "title": message.get("title") or BRAND,
+        "body": message.get("content") or "",
+    }
+    group = str(cfg.get("group") or "").strip()
+    if group:
+        body["group"] = group
+    level = str(cfg.get("level") or "").strip()
+    if level in _BARK_LEVELS:
+        body["level"] = level
+    for field in ("sound", "icon"):
+        value = str(cfg.get(field) or "").strip()
+        if value:
+            body[field] = value
+    # Bark's `copy` puts text on the clipboard when the notification is tapped. For an SMS
+    # carrying a code that removes the manual transcription step entirely.
+    if str(payload.get("code") or "").strip():
+        body["copy"] = str(payload["code"]).strip()
+
+    enc_key = str(cfg.get("encryption_key") or "").strip()
+    if enc_key:
+        mode = str(cfg.get("encryption_mode") or "CBC").strip().upper()
+        # IV 每条随机生成：新版 Bark App 已移除 IV 输入框，IV 随消息传递；
+        # 固定 IV 在 CBC 下也是密码学反模式。
+        ciphertext, iv_used = _bark_encrypt(
+            json.dumps(body, ensure_ascii=False), enc_key, mode)
+        body = {"ciphertext": ciphertext}
+        if iv_used:
+            body["iv"] = iv_used
+
+    url = f"{server}/{quote(device_key)}"
+    try:
+        response = requests.post(url, json=body, timeout=_TIMEOUT)
+        response.raise_for_status()
+        result = response.json()
+    except (requests.RequestException, ValueError):
+        raise RuntimeError("Bark request failed") from None
+    # Bark 成功返回 {"code": 200, ...}；HTTP 200 也可能是应用层错误
+    try:
+        code = int(result.get("code"))
+    except (TypeError, ValueError, AttributeError):
+        code = 0
+    if code != 200:
+        detail = result.get("message") if isinstance(result, dict) else None
+        raise RuntimeError(f"Bark rejected the message: {detail!r}")
+    return {"ok": True, "status_code": response.status_code}
+
+
 def dispatch(settings: dict, event: str, instance: dict, source: str, text: str | None = None,
              match_instances: list[str] | None = None):
     """Queue independent deliveries on the notification pool and return their futures.
@@ -809,6 +1016,9 @@ def dispatch(settings: dict, event: str, instance: dict, source: str, text: str 
         pp = settings.get("pushplus") or {}
         if pp.get("enabled") and _events_enabled(pp).get(event):
             deliveries.append(("pushplus", send_pushplus, pp))
+        bk = settings.get("bark") or {}
+        if bk.get("enabled") and _events_enabled(bk).get(event):
+            deliveries.append(("bark", send_bark, bk))
         for position, fs in enumerate(feishu_channels(settings.get("feishu") or {}), start=1):
             if (fs.get("enabled") and _events_enabled(fs).get(event)
                     and any(feishu_channel_matches(fs, iid) for iid in

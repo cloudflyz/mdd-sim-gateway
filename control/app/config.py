@@ -180,6 +180,22 @@ DEFAULTS = {
                        "keepalive_result": True, "balance_low": True,
                        "software_update": True},
         },
+        "bark": {
+            "enabled": False,
+            "server": "https://api.day.app",
+            "device_key": "",
+            "group": "MDD",
+            "level": "active",
+            "sound": "",
+            "icon": "",
+            "encryption_key": "",
+            "encryption_mode": "CBC",
+            "message_templates": {},
+            "events": {"incoming_sms": True, "incoming_call": True,
+                       "missed_call": True, "voicemail_received": True,
+                       "keepalive_result": True, "balance_low": True,
+                       "software_update": True},
+        },
         "feishu": {
             "enabled": False,
             "url": "",
@@ -368,7 +384,7 @@ def load() -> dict:
                                     **(data.get("settings", {}).get("debug", {}))}
         # notification channels: merge one level deep (like tls/retry) so a saved config that
         # predates these keys — or omits the nested `events` map — still gets full defaults.
-        for key in ("webhook", "telegram", "pushplus", "feishu"):
+        for key in ("webhook", "telegram", "pushplus", "feishu", "bark"):
             saved = data.get("settings", {}).get(key, {}) or {}
             merged = {**DEFAULTS["settings"][key], **saved}
             merged["events"] = {**DEFAULTS["settings"][key]["events"],
@@ -1352,3 +1368,5 @@ def write_instance_json(inst: dict, settings: dict) -> str:
     os.replace(tmp, path)
     os.chmod(path, 0o600)
     return path
+
+# BARK_CHANNEL_PATCH

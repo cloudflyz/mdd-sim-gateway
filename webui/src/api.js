@@ -126,6 +126,7 @@ export const api = {
   testWebhook: (config) => j('POST', '/api/notifications/webhook/test', config || {}),
   testTelegram: (config) => j('POST', '/api/notifications/telegram/test', config || {}),
   testPushPlus: (config) => j('POST', '/api/notifications/pushplus/test', config || {}),
+  testBark: (config) => j('POST', '/api/notifications/bark/test', config || {}),
   testFeishu: (config) => j('POST', '/api/notifications/feishu/test', config || {}),
   notificationDeliveries: (limit = 100) => j('GET', `/api/notifications/deliveries?limit=${limit}`),
   clearNotificationDeliveries: () => j('DELETE', '/api/notifications/deliveries'),
@@ -343,3 +344,5 @@ export function connectWs(onMsg, onAuthLost, onOriginRefused) {
   open()
   return () => { alive = false; try { ws.close() } catch {} }
 }
+
+// BARK_CHANNEL_PATCH

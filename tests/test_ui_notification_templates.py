@@ -15,7 +15,7 @@ class NotificationTemplateUiTests(unittest.TestCase):
         self.assertIn("<MessageTemplateEditor channel={activeFeishuChannel.name || activeFeishuChannel.id}", SOURCE)
 
     def test_editor_exposes_only_the_backend_template_fields(self):
-        expected = "{{title}} {{content}} {{event}} {{sim_name}} {{msisdn}} {{from}} {{text}} {{instance}} {{iccid}}"
+        expected = "{{title}} {{content}} {{event}} {{sim_name}} {{msisdn}} {{from}} {{text}} {{code}} {{instance}} {{iccid}}"
         self.assertIn(expected, SOURCE)
 
     def test_each_channel_can_test_the_selected_event(self):
