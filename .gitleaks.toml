@@ -1,0 +1,26 @@
+# gitleaks configuration for the self-use fork of MddIdd/mdd-sim-gateway.
+#
+# The allowlist below covers exactly the findings that gitleaks 8.30.1 reports on
+# the pristine upstream v1.14.0 tree as well (verified by scanning the official
+# tarball: same rules, same files, same lines). They are data/identifiers, not
+# credentials, and this fork does not add secrets to either file:
+#
+#   control/app/data/carrier_list.textpb
+#     privilege_access_rule: "4C36AF4A...FD1859" — a published 3GPP access-rule
+#     constant in the carrier database (appears twice).
+#   tests/test_dito_vowifi_compat.py
+#     The generic-api-key heuristic matched the identifier "MODP_1024_bit" inside
+#     a list of IKE constant names the test asserts on; there is no value there.
+#
+# Everything else in the tree is still scanned with the default rule set.
+title = "mdd-sim-gateway self-use fork"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Upstream false positives: carrier data hash field and a test constant name"
+paths = [
+  '''control/app/data/carrier_list\.textpb''',
+  '''tests/test_dito_vowifi_compat\.py''',
+]
