@@ -2541,6 +2541,11 @@ class swu():
         # DESTINATION: pin each resolver nameserver (and they're LAN/RFC1918 anyway) to the LAN gw.
         for _ns in self._resolver_nameservers_v4():
             self.exec_in_netns("route add " + _ns + "/32 gw " + gw + " 2>/dev/null")
+        # VoWiFi engine addition: container-ORIGINATED RTP toward a LAN peer must not
+        # enter the tunnel (the source-based rule above only covers replies).
+        # Pin LAN CIDRs by destination. NEVER pin 10.0.0.0/8 (carrier IMS/media).
+        for _cidr in os.environ.get("SWU_LAN_PIN_CIDRS", "192.168.0.0/16 172.16.0.0/12").split():
+            self.exec_in_netns("route add -net " + _cidr + " gw " + gw + " 2>/dev/null")
 
     def _lan_egress_iface(self):
         """The container's outbound LAN interface (the one carrying SWU_SOURCE). Almost always eth0

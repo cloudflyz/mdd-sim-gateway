@@ -27,7 +27,7 @@ sec_port_s_max=54999
 {% if pani %}
 p_access_network_info={{ pani }}
 {% endif %}
-sec_encryption=yes
+sec_encryption=no
 
 {% if pcscf %}
 [volte_ims]
@@ -51,6 +51,7 @@ receive_sms=yes
 
 [volte_ims]
 type=endpoint
+dtmf_mode=info
 ; Carrier-specific: O2 UK requires ;user=phone on originating telephone-number INVITEs, while
 ; Telus' SMSC rejects MESSAGE request-URIs carrying it. The control-plane config selects this.
 user_eq_phone={{ 'yes' if user_eq_phone else 'no' }}
